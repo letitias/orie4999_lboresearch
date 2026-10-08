@@ -73,6 +73,17 @@ def sample_inputs(n=N_SIMS, correlations=CORRELATIONS, seed=SEED):
     draws["hold"] = HOLD_YEARS[np.searchsorted(cum, u[:, -1])]
     return pd.DataFrame(draws)
 
+EMPIRICAL_PATH = "data/brightquery_company_params.csv"
+EMPIRICAL_COLS = ["ebitda_g", "da", "capex_nwc"]
+
+def sample_inputs_empirical(n=N_SIMS, correlations=CORRELATIONS, seed=SEED):
+    """Same as sample_inputs, but operating inputs are drawn jointly from real companies."""
+    draws = sample_inputs(n, correlations, seed)      # multiples, leverage, rate, fees, hold
+    co = pd.read_csv(EMPIRICAL_PATH)
+    picked = co.sample(n=n, replace=True, random_state=seed + 1)[EMPIRICAL_COLS]
+    draws[EMPIRICAL_COLS] = picked.to_numpy()
+    return draws
+
 
 # ---------------------------------------------------------------------------
 # 3. LBO ENGINE (vectorized: every array has one entry per scenario)
@@ -97,10 +108,10 @@ def run_lbo(d):
 
         exits_now = d["hold"] == t
         exit_ev = d["exit_mult"] * ebitda
-        exit_equity = np.where(exits_now, exit_ev - debt + cash, exit_equity)
+        exit_equity = np.where(exits_now, np.maximum(exit_ev - debt + cash, 0), exit_equity)
 
     moic = exit_equity / equity_in
-    irr = np.sign(moic) * np.abs(moic) ** (1 / d["hold"]) - 1   # single in/out cash flow
+    irr = np.where(moic > 0, moic ** (1 / d["hold"]) - 1, -1.0)   # total loss = -100%
     return pd.DataFrame({"irr": irr, "moic": moic})
 
 
@@ -206,12 +217,15 @@ def prompt_inputs():
 
 if __name__ == "__main__":
     import sys
-    # Run with --defaults to skip the prompts and use the deck's values
     correlations = CORRELATIONS if "--defaults" in sys.argv else prompt_inputs()
 
     base = run_lbo(pd.DataFrame([BASE]))
     print(f"Base case IRR {base.irr[0]:.1%}, MOIC {base.moic[0]:.2f}x\n")
 
+    print("=== Assumed (triangular) inputs ===")
     draws = sample_inputs(n=N_SIMS, correlations=correlations)
-    results = run_lbo(draws)
-    summarize(draws, results)
+    summarize(draws, run_lbo(draws))
+
+    print("\n=== Operating inputs from BrightQuery companies ===")
+    draws_emp = sample_inputs_empirical(n=N_SIMS, correlations=correlations)
+    summarize(draws_emp, run_lbo(draws_emp))
