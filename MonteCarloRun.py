@@ -9,6 +9,7 @@ Structure
 4. OUTPUTS     : IRR / MOIC distribution, outcome probabilities, variance attribution
 """
 
+import os
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -22,8 +23,8 @@ EBITDA_0 = 100.0         # scale-free: returns don't depend on company size
 # 1. INPUTS: (low, most likely, high), triangular, same ranges as tornado deck
 # ---------------------------------------------------------------------------
 INPUTS = {
-    "entry_mult":  (10.0,  12.0,  15.5),
-    "exit_mult":   (10.0,  12.0,  15.5),
+    "entry_mult":  (10.0,  12.0,  15.5),    # replaced by Damodaran data below if available
+    "exit_mult":   (10.0,  12.0,  15.5),    # same distribution as entry
     "ebitda_g":    (0.02,  0.06,  0.10),
     "leverage":    (4.6,   5.2,   5.9),     # Debt / EBITDA at entry
     "rate":        (0.064, 0.0925, 0.101),
@@ -31,9 +32,19 @@ INPUTS = {
     "da":          (0.10,  0.20,  0.35),    # % of EBITDA
     "fees":        (0.01,  0.02,  0.03),    # % of entry EV
 }
-HOLD_YEARS = np.array([5, 6, 7])
-HOLD_PROBS = np.array([0.25, 0.50, 0.25])
 
+# Multiples calibrated to Damodaran's US industry EV/EBITDA: 10th / 50th / 90th pct
+# across industries (made by damodaran_multiples.ipynb). If the csv isn't there yet,
+# we just keep the guessed 10 / 12 / 15.5 above.
+MULT_PATH = "data/multiple_params.csv"
+if os.path.exists(MULT_PATH):
+    m = pd.read_csv(MULT_PATH).iloc[0]
+    INPUTS["entry_mult"] = INPUTS["exit_mult"] = (float(m["low"]), float(m["mode"]), float(m["high"]))
+
+HOLD_YEARS = np.array([5, 6, 7])
+HOLD_PROBS = np.array([0.25, 0.50, 0.25])   # most deals exit in year 6
+
+# base case = every input at its most likely value
 BASE = {k: v[1] for k, v in INPUTS.items()} | {"hold": 6}
 
 # Optional correlation between inputs (Spearman-ish, applied on normal scores).
@@ -49,7 +60,7 @@ CORRELATIONS = {
 # ---------------------------------------------------------------------------
 def triangular_ppf(u, low, mode, high):
     """Map uniform(0,1) draws to a triangular distribution (inverse CDF)."""
-    c = (mode - low) / (high - low)
+    c = (mode - low) / (high - low)   # where the peak sits, as a fraction of the range
     return stats.triang.ppf(u, c, loc=low, scale=high - low)
 
 
@@ -63,12 +74,14 @@ def sample_inputs(n=N_SIMS, correlations=CORRELATIONS, seed=SEED):
     for (a, b), rho in correlations.items():
         i, j = names.index(a), names.index(b)
         corr[i, j] = corr[j, i] = rho
+    # cholesky turns independent normals into correlated ones
     z = rng.standard_normal((n, k)) @ np.linalg.cholesky(corr).T
     u = stats.norm.cdf(z)                       # correlated uniforms
 
+    # each uniform column -> that input's triangular distribution
     draws = {name: triangular_ppf(u[:, i], *INPUTS[name])
              for i, name in enumerate(INPUTS)}
-    # Holding period: discrete 5/6/7 with 25/50/25 weights
+    # Holding period: discrete 5/6/7 with 25/50/25 weights (last uniform column)
     cum = np.cumsum(HOLD_PROBS)
     draws["hold"] = HOLD_YEARS[np.searchsorted(cum, u[:, -1])]
     return pd.DataFrame(draws)
@@ -80,6 +93,7 @@ def sample_inputs_empirical(n=N_SIMS, correlations=CORRELATIONS, seed=SEED):
     """Same as sample_inputs, but operating inputs are drawn jointly from real companies."""
     draws = sample_inputs(n, correlations, seed)      # multiples, leverage, rate, fees, hold
     co = pd.read_csv(EMPIRICAL_PATH)
+    # pick a real company per run, so its growth / capex / D&A stay together
     picked = co.sample(n=n, replace=True, random_state=seed + 1)[EMPIRICAL_COLS]
     draws[EMPIRICAL_COLS] = picked.to_numpy()
     return draws
@@ -95,11 +109,12 @@ def run_lbo(d):
     cash = np.zeros(len(entry_ev))
 
     exit_equity = np.zeros(len(entry_ev))
+    # simulate out to the longest hold; each run grabs its value in its own exit year
     for t in range(1, HOLD_YEARS.max() + 1):
         ebitda = EBITDA_0 * (1 + d["ebitda_g"]) ** t
         interest = d["rate"] * debt                        # on opening balance
         ebt = ebitda - d["da"] * ebitda - interest
-        tax = np.maximum(ebt, 0) * TAX_RATE
+        tax = np.maximum(ebt, 0) * TAX_RATE                # no tax on losses
         fcf = ebitda - interest - tax - d["capex_nwc"] * ebitda
 
         paydown = np.clip(fcf, 0, debt)                   # 100% cash sweep
@@ -108,6 +123,7 @@ def run_lbo(d):
 
         exits_now = d["hold"] == t
         exit_ev = d["exit_mult"] * ebitda
+        # equity can't go below zero (sponsor loses at most what it put in)
         exit_equity = np.where(exits_now, np.maximum(exit_ev - debt + cash, 0), exit_equity)
 
     moic = exit_equity / equity_in
@@ -130,6 +146,7 @@ def summarize(draws, results):
     print(f"P(MOIC < 1)  {(results['moic'] < 1).mean():.1%}")
 
     # Variance attribution: squared Spearman rank correlation, normalized
+    # (only clean when inputs are independent; with CORRELATIONS on, read it loosely)
     rho = draws.apply(lambda col: stats.spearmanr(col, irr)[0])
     share = (rho**2 / (rho**2).sum()).sort_values(ascending=False)
     print("\nShare of IRR variance (squared Spearman, normalized):")
@@ -177,6 +194,7 @@ def prompt_inputs():
     print("Percentages are typed as plain numbers, e.g. 6 for 6%.\n")
     new_inputs = {}
     for name, (label, unit, scale) in LABELS.items():
+        # show defaults in the units people type (6 not 0.06)
         lo, mode, hi = (round(v * scale, 4) for v in INPUTS[name])
         while True:
             print(f"{label} ({unit})")
@@ -201,6 +219,7 @@ def prompt_inputs():
     TAX_RATE = ask("Tax rate (%)", TAX_RATE * 100) / 100
     N_SIMS = ask("Number of runs", N_SIMS, int)
 
+    # only the two pairs we have a story for; 0 leaves them independent
     corr = {}
     rho = ask("Correlation between entry and exit multiple (-0.9 to 0.9, 0 = none)", 0.0)
     if rho:
@@ -217,7 +236,11 @@ def prompt_inputs():
 
 if __name__ == "__main__":
     import sys
+    # `python MonteCarloRun.py --defaults` skips the prompts
     correlations = CORRELATIONS if "--defaults" in sys.argv else prompt_inputs()
+
+    lo, mode, hi = INPUTS["entry_mult"]
+    print(f"Entry/exit multiple range: {lo:.1f}x / {mode:.1f}x / {hi:.1f}x\n")
 
     base = run_lbo(pd.DataFrame([BASE]))
     print(f"Base case IRR {base.irr[0]:.1%}, MOIC {base.moic[0]:.2f}x\n")
