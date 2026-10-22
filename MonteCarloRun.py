@@ -84,6 +84,15 @@ def sample_inputs_empirical(n=N_SIMS, correlations=CORRELATIONS, seed=SEED):
     draws[EMPIRICAL_COLS] = picked.to_numpy()
     return draws
 
+def sample_inputs_normal(n=N_SIMS, correlations=CORRELATIONS, seed=SEED):
+    """Operating inputs drawn from normal distributions fitted to the data (independent)."""
+    draws = sample_inputs(n, correlations, seed)
+    co = pd.read_csv(EMPIRICAL_PATH)
+    rng = np.random.default_rng(seed + 2)
+    for c in EMPIRICAL_COLS:
+        draws[c] = rng.normal(co[c].mean(), co[c].std(), n)
+    draws["da"] = draws["da"].clip(lower=0)      # depreciation can't be negative
+    return draws
 
 # ---------------------------------------------------------------------------
 # 3. LBO ENGINE (vectorized: every array has one entry per scenario)
