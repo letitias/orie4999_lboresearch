@@ -108,6 +108,16 @@ def sample_inputs_normal(n=N_SIMS, correlations=CORRELATIONS, seed=SEED):
     draws["da"] = draws["da"].clip(lower=0)      # depreciation can't be negative
     return draws
 
+def sample_inputs_normal(n=N_SIMS, correlations=CORRELATIONS, seed=SEED):
+    """Operating inputs drawn from normal distributions fitted to the data (independent)."""
+    draws = sample_inputs(n, correlations, seed)
+    co = pd.read_csv(EMPIRICAL_PATH)
+    rng = np.random.default_rng(seed + 2)
+    for c in EMPIRICAL_COLS:
+        draws[c] = rng.normal(co[c].mean(), co[c].std(), n)
+    draws["da"] = draws["da"].clip(lower=0)      # depreciation can't be negative
+    return draws
+
 # ---------------------------------------------------------------------------
 # 3. LBO ENGINE (vectorized: every array has one entry per scenario)
 # ---------------------------------------------------------------------------
@@ -165,6 +175,37 @@ def summarize(draws, results):
     print("\nConvergence (mean IRR by number of runs):")
     for n in [100, 1_000, 5_000, len(irr)]:
         print(f"  {n:>6,}: {irr[:n].mean():.2%}")
+
+def plot_irr_distributions(results_by_label, path="results/irr_distributions.png"):
+    """Overlay the simulated IRR distributions of several Monte Carlo versions."""
+    import matplotlib.pyplot as plt
+    colors = ["#eb6834", "#1baf7a", "#2a78d6"]        # triangular, normal, real data
+    lo, hi = -0.40, 0.70                               # view range; beyond is piled at the edges
+    bins = np.linspace(lo, hi, 70)
+
+    fig, ax = plt.subplots(figsize=(11, 5.5))
+    ax.axvspan(lo, 0, color="#eeeeee", zorder=0)
+    ax.text(lo + 0.01, 0.97, "Loses money\n(IRR < 0)", transform=ax.get_xaxis_transform(),
+            va="top", fontsize=10, color="#555555")
+    for (label, res), c in zip(results_by_label.items(), colors):
+        irr = res["irr"].clip(lo, hi)
+        p_loss = (res["moic"] < 1).mean()
+        ax.hist(irr, bins=bins, density=True, histtype="step", lw=2.2, color=c,
+                label=f"{label}: median {res['irr'].median():.1%}, P(loss) {p_loss:.1%}")
+    ax.axvline(0, color="#333333", lw=1)
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x:.0%}"))
+    ax.set_xlabel("Equity IRR"); ax.set_yticks([]); ax.set_ylabel("Share of simulated deals")
+    for s in ("top", "right"):
+        ax.spines[s].set_visible(False)
+    ax.legend(loc="upper right", frameon=False, fontsize=10)
+    ax.set_title("Simulated LBO returns: same model, different input distributions",
+                 loc="left", fontsize=14)
+    fig.text(0.01, -0.02, f"{len(next(iter(results_by_label.values()))):,} simulations per version. "
+             "IRRs beyond the plotted range are piled into the edge bins.", fontsize=9, color="#666")
+    plt.tight_layout()
+    fig.savefig(path, dpi=200, bbox_inches="tight", facecolor="white")
+    print(f"Saved {path}")
+    plt.show()
 
 
 # ---------------------------------------------------------------------------
@@ -256,8 +297,21 @@ if __name__ == "__main__":
 
     print("=== Assumed (triangular) inputs ===")
     draws = sample_inputs(n=N_SIMS, correlations=correlations)
-    summarize(draws, run_lbo(draws))
+    res_tri = run_lbo(draws)
+    summarize(draws, res_tri)
+
+    print("\n=== Operating inputs: normal fitted to BrightQuery ===")
+    draws_n = sample_inputs_normal(n=N_SIMS, correlations=correlations)
+    res_norm = run_lbo(draws_n)
+    summarize(draws_n, res_norm)
 
     print("\n=== Operating inputs from BrightQuery companies ===")
     draws_emp = sample_inputs_empirical(n=N_SIMS, correlations=correlations)
-    summarize(draws_emp, run_lbo(draws_emp))
+    res_emp = run_lbo(draws_emp)
+    summarize(draws_emp, res_emp)
+
+    plot_irr_distributions({
+        "Assumed (triangular)": res_tri,
+        "Normal fitted to data": res_norm,
+        "Real company data": res_emp,
+    })
