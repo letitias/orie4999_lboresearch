@@ -124,9 +124,11 @@ def normal_scores(x):
     return stats.norm.ppf(ranks)
 
 
-def sample_inputs_copula(n=N_SIMS, correlations=CORRELATIONS, seed=SEED, verbose=True):
+def sample_inputs_copula(n=N_SIMS, correlations=CORRELATIONS, seed=SEED, verbose=True, independent=False):   
     """Gaussian copula: operating inputs keep their real (empirical) distributions and
     their real correlations; the other inputs keep their triangular distributions."""
+    if independent:
+        corr = np.eye(k)
     co = pd.read_csv(EMPIRICAL_PATH)
     names = list(INPUTS) + ["hold"]
     k = len(names)
@@ -359,6 +361,12 @@ if __name__ == "__main__":
     draws_c = sample_inputs_copula(n=N_SIMS, correlations=correlations)
     res_cop = run_lbo(draws_c)
     summarize(draws_c, res_cop)
+
+    print("\n=== Copula with NO correlations (test) ===")
+    draws_i = sample_inputs_copula(n=N_SIMS, correlations=correlations, independent=True)
+    res_indep = run_lbo(draws_i)
+    summarize(draws_i, res_indep)
+
 
     plot_irr_distributions({
         "Assumed (triangular)": res_tri,
