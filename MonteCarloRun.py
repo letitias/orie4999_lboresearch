@@ -118,6 +118,51 @@ def sample_inputs_normal(n=N_SIMS, correlations=CORRELATIONS, seed=SEED):
     draws["da"] = draws["da"].clip(lower=0)      # depreciation can't be negative
     return draws
 
+def normal_scores(x):
+    """'Normalize' a variable: replace each value by the normal quantile of its rank."""
+    ranks = stats.rankdata(x) / (len(x) + 1)          # ranks scaled into (0, 1)
+    return stats.norm.ppf(ranks)
+
+
+def sample_inputs_copula(n=N_SIMS, correlations=CORRELATIONS, seed=SEED, verbose=True):
+    """Gaussian copula: operating inputs keep their real (empirical) distributions and
+    their real correlations; the other inputs keep their triangular distributions."""
+    co = pd.read_csv(EMPIRICAL_PATH)
+    names = list(INPUTS) + ["hold"]
+    k = len(names)
+
+    # 1. Correlation matrix on the normal scale
+    corr = np.eye(k)
+    z_data = np.column_stack([normal_scores(co[c]) for c in EMPIRICAL_COLS])
+    emp_corr = np.corrcoef(z_data, rowvar=False)                 # estimated from the data
+    idx = [names.index(c) for c in EMPIRICAL_COLS]
+    for a, i in enumerate(idx):
+        for b, j in enumerate(idx):
+            if i != j:
+                corr[i, j] = emp_corr[a, b]
+    for (a, b), rho in correlations.items():                      # any assumed extras
+        i, j = names.index(a), names.index(b)
+        corr[i, j] = corr[j, i] = rho
+    if verbose:
+        print("Correlations of normal scores (from data):")
+        print(pd.DataFrame(emp_corr, index=EMPIRICAL_COLS, columns=EMPIRICAL_COLS).round(2), "\n")
+
+    # 2. Correlated normals -> correlated uniforms
+    rng = np.random.default_rng(seed)
+    z = rng.standard_normal((n, k)) @ np.linalg.cholesky(corr).T
+    u = stats.norm.cdf(z)
+
+    # 3. Uniforms -> real units, through each input's own distribution
+    draws = {}
+    for i, name in enumerate(INPUTS):
+        if name in EMPIRICAL_COLS:
+            draws[name] = np.quantile(co[name], u[:, i])          # empirical quantiles
+        else:
+            draws[name] = triangular_ppf(u[:, i], *INPUTS[name])
+    cum = np.cumsum(HOLD_PROBS)
+    draws["hold"] = HOLD_YEARS[np.searchsorted(cum, u[:, -1])]
+    return pd.DataFrame(draws)
+
 # ---------------------------------------------------------------------------
 # 3. LBO ENGINE (vectorized: every array has one entry per scenario)
 # ---------------------------------------------------------------------------
@@ -179,7 +224,7 @@ def summarize(draws, results):
 def plot_irr_distributions(results_by_label, path="results/irr_distributions.png"):
     """Overlay the simulated IRR distributions of several Monte Carlo versions."""
     import matplotlib.pyplot as plt
-    colors = ["#eb6834", "#1baf7a", "#2a78d6"]        # triangular, normal, real data
+    colors = ["#eb6834", "#1baf7a", "#2a78d6", "#eda100"]   # one per version, in order        # triangular, normal, real data
     lo, hi = -0.40, 0.70                               # view range; beyond is piled at the edges
     bins = np.linspace(lo, hi, 70)
 
@@ -310,8 +355,14 @@ if __name__ == "__main__":
     res_emp = run_lbo(draws_emp)
     summarize(draws_emp, res_emp)
 
+    print("\n=== Gaussian copula: real distributions + real correlations ===")
+    draws_c = sample_inputs_copula(n=N_SIMS, correlations=correlations)
+    res_cop = run_lbo(draws_c)
+    summarize(draws_c, res_cop)
+
     plot_irr_distributions({
         "Assumed (triangular)": res_tri,
         "Normal fitted to data": res_norm,
         "Real company data": res_emp,
+        "Gaussian copula": res_cop,
     })
