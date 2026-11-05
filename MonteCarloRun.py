@@ -124,15 +124,50 @@ def normal_scores(x):
     return stats.norm.ppf(ranks)
 
 
-def sample_inputs_copula(n=N_SIMS, correlations=CORRELATIONS, seed=SEED, verbose=True, independent=False):   
+def sample_inputs_copula(n=N_SIMS, correlations=CORRELATIONS, seed=SEED, verbose=True, independent=False):
     """Gaussian copula: operating inputs keep their real (empirical) distributions and
-    their real correlations; the other inputs keep their triangular distributions."""
-    if independent:
-        corr = np.eye(k)
+    their real correlations; the other inputs keep their triangular distributions.
+    independent=True switches all correlations off (test run)."""
     co = pd.read_csv(EMPIRICAL_PATH)
     names = list(INPUTS) + ["hold"]
     k = len(names)
+    corr = np.eye(k)
 
+    # correlations measured from the real companies (on normal scores)
+    z_data = np.column_stack([normal_scores(co[c]) for c in EMPIRICAL_COLS])
+    emp_corr = np.corrcoef(z_data, rowvar=False)
+    if verbose:
+        print("Correlations of normal scores (from data):")
+        print(pd.DataFrame(emp_corr, index=EMPIRICAL_COLS, columns=EMPIRICAL_COLS).round(2), "\n")
+
+    idx = [names.index(c) for c in EMPIRICAL_COLS]
+    for a, i in enumerate(idx):
+        for b, j in enumerate(idx):
+            if i != j:
+                corr[i, j] = emp_corr[a, b]
+
+    # user-chosen correlations (entry/exit, growth/leverage)
+    for (a, b), rho in correlations.items():
+        i, j = names.index(a), names.index(b)
+        corr[i, j] = corr[j, i] = rho
+
+    if independent:
+        corr = np.eye(k)   # every input moves on its own
+
+    rng = np.random.default_rng(seed)
+    z = rng.standard_normal((n, k)) @ np.linalg.cholesky(corr).T
+    u = stats.norm.cdf(z)
+
+    draws = {}
+    for i, name in enumerate(INPUTS):
+        if name in EMPIRICAL_COLS:
+            draws[name] = np.quantile(co[name], u[:, i])
+        else:
+            draws[name] = triangular_ppf(u[:, i], *INPUTS[name])
+
+    cum = np.cumsum(HOLD_PROBS)
+    draws["hold"] = HOLD_YEARS[np.searchsorted(cum, u[:, -1])]
+    return pd.DataFrame(draws)
     # 1. Correlation matrix on the normal scale
     corr = np.eye(k)
     z_data = np.column_stack([normal_scores(co[c]) for c in EMPIRICAL_COLS])
