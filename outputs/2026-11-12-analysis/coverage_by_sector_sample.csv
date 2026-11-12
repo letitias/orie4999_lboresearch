@@ -1,0 +1,15 @@
+sector,companies,candidates,complete,missing,dropouts,complete_pct
+Accommodation and Food Services,4,35,20,15,0,57.142857142857146
+Administrative and Support and Waste Management and Remediation Services,10,67,51,16,0,76.11940298507463
+"Arts, Entertainment, and Recreation",5,32,17,15,0,53.125
+Construction,6,42,19,21,2,45.23809523809524
+Educational Services,1,9,9,0,0,100.0
+Finance and Insurance,8,62,47,15,0,75.80645161290323
+Health Care and Social Assistance,7,51,19,32,0,37.254901960784316
+Information,3,22,2,20,0,9.090909090909092
+Management of Companies and Enterprises,7,50,25,25,0,50.0
+Manufacturing,4,20,19,1,0,95.0
+Other Services (except Public Administration),10,72,57,14,1,79.16666666666667
+"Professional, Scientific, and Technical Services",22,153,62,80,11,40.52287581699346
+Real Estate and Rental and Leasing,6,42,20,20,2,47.61904761904762
+Wholesale Trade,3,25,23,2,0,92.0

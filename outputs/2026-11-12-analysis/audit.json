@@ -1,0 +1,63 @@
+{
+  "missing_windows": 12325,
+  "missing_with_row_gaps": 39,
+  "missing_with_cell_gaps": 12319,
+  "missing_with_both": 33,
+  "field_types_missing": {
+    "0": 6,
+    "1": 3808,
+    "2": 833,
+    "3": 187,
+    "4": 7303,
+    "5": 188
+  },
+  "missing_by_field": [
+    {
+      "field": "EBITDA",
+      "windows": 307,
+      "cells": 342
+    },
+    {
+      "field": "Gross PP&E input",
+      "windows": 7717,
+      "cells": 34402
+    },
+    {
+      "field": "Accumulated D&A",
+      "windows": 11728,
+      "cells": 56562
+    },
+    {
+      "field": "Current assets",
+      "windows": 7709,
+      "cells": 31026
+    },
+    {
+      "field": "Current liabilities",
+      "windows": 8726,
+      "cells": 37099
+    }
+  ],
+  "sector_windows": 682,
+  "sector_companies": 96,
+  "dropout_companies_7y": 455,
+  "candidate_companies": 3998,
+  "legacy_baseline": {
+    "loss_pct": 32.53,
+    "total_loss_pct": 15.93,
+    "median_irr_pct": 9.666710136344857,
+    "median_moic": 1.740857674286882
+  },
+  "copula": {
+    "paths": 12867,
+    "simulations": 50000,
+    "lag1_ebitda_rank_normal_corr": [
+      0.6214357632465664,
+      0.677871062678366,
+      0.7120255766558928,
+      0.7113299672861401,
+      0.7397184323773682,
+      0.7494300952778092
+    ]
+  }
+}
